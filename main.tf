@@ -1,3 +1,146 @@
+# AWS Configuration (VPC, Subredes, Gateway, Route Tables, EC2, ELB)
+
+provider "aws" {
+  region = "us-west-2" # Region AWS test
+}
+
+# VPC Configuration
+resource "aws_vpc" "my_vpc" {
+  cidr_block = "10.0.0.0/16"
+  enable_dns_support = true
+  enable_dns_hostnames = true
+  tags = {
+    Name = "my-vpc"
+  }
+}
+
+resource "aws_subnet" "my_subnet1" {
+  vpc_id            = aws_vpc.my_vpc.id
+  cidr_block        = "10.0.1.0/24"
+  availability_zone = "us-west-2a"
+  tags = {
+    Name = "my-subnet-1"
+  }
+}
+
+resource "aws_subnet" "my_subnet2" {
+  vpc_id            = aws_vpc.my_vpc.id
+  cidr_block        = "10.0.2.0/24"
+  availability_zone = "us-west-2b"
+  tags = {
+    Name = "my-subnet-2"
+  }
+}
+
+resource "aws_internet_gateway" "my_gw" {
+  vpc_id = aws_vpc.my_vpc.id
+  tags = {
+    Name = "my-gateway"
+  }
+}
+
+resource "aws_route_table" "my_route_table" {
+  vpc_id = aws_vpc.my_vpc.id
+
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.my_gw.id
+  }
+
+  tags = {
+    Name = "my-route-table"
+  }
+}
+
+resource "aws_route_table_association" "a" {
+  subnet_id      = aws_subnet.my_subnet1.id
+  route_table_id = aws_route_table.my_route_table.id
+}
+
+resource "aws_route_table_association" "b" {
+  subnet_id      = aws_subnet.my_subnet2.id
+  route_table_id = aws_route_table.my_route_table.id
+}
+
+# EC2 Configuration
+resource "aws_security_group" "allow_web" {
+  name        = "allow_web_traffic"
+  description = "Allow web inbound traffic"
+  vpc_id      = aws_vpc.my_vpc.id
+
+  ingress {
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "allow_web"
+  }
+}
+
+resource "aws_instance" "my_instance1" {
+  ami                    = "ami-abcdefgh"  # AMI Ubuntu
+  instance_type          = "t2.micro"
+  subnet_id              = aws_subnet.my_subnet1.id
+  vpc_security_group_ids = [aws_security_group.allow_web.id]
+
+  tags = {
+    Name = "MyInstance1"
+  }
+}
+
+resource "aws_instance" "my_instance2" {
+  ami                    = "ami-abcdefgh"  # AMI Ubuntu
+  instance_type          = "t2.micro"
+  subnet_id              = aws_subnet.my_subnet2.id
+  vpc_security_group_ids = [aws_security_group.allow_web.id]
+
+  tags = {
+    Name = "MyInstance2"
+  }
+}
+
+# ELB Configuration
+resource "aws_elb" "my_elb" {
+  name               = "my-elb"
+  availability_zones = ["us-west-2a", "us-west-2b"]
+
+  listener {
+    instance_port     = 80
+    instance_protocol = "HTTP"
+    lb_port           = 80
+    lb_protocol       = "HTTP"
+  }
+
+  health_check {
+    target              = "HTTP:80/"
+    interval            = 30
+    timeout             = 5
+    healthy_threshold   = 2
+    unhealthy_threshold = 2
+  }
+
+  instances                   = [aws_instance.my_instance1.id, aws_instance.my_instance2.id]
+  cross_zone_load_balancing   = true
+  idle_timeout                = 400
+  connection_draining         = true
+  connection_draining_timeout = 400
+
+  tags = {
+    Name = "my-elb"
+  }
+}
+
+# Kubernetes and NGINX Configuration
 locals {
   nginx_name = "nginx"
   nginx_sha  = sha1(join("", [for f in fileset(path.module, "nginx/*") : filesha1(f)]))
